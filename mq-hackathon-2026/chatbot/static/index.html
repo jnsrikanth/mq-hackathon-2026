@@ -166,6 +166,11 @@ function drawBarChart(containerId, labels, series){
         width: barW/series.length, height: h, fill: s.color
       }));
     });
+    // X-axis label
+    const labelX = pad.l + (i+0.5)*(innerW/groups);
+    const labelEl = svgEl("text", {x:labelX, y:H-pad.b+14, "text-anchor":"middle", fill:"#CFE1FA", "font-size":"9"},
+      [document.createTextNode(lab.length > 10 ? lab.slice(0,10) : lab)]);
+    svg.appendChild(labelEl);
   });
   c.appendChild(svg);
 }
@@ -383,15 +388,32 @@ function drawKPICharts(){
     {name:"AS-IS", color:"rgba(31,111,235,0.85)", data:asVals},
     {name:"TARGET", color:"rgba(125,74,234,0.85)", data:tVals}
   ]);
-  const asTop = asIs.top5_hub_qm || [];
-  const tTop = target.top5_hub_qm || [];
-  const map = {};
-  asTop.forEach(([q,d]) => map[q] = {as:d, t:0});
-  tTop.forEach(([q,d]) => { if(!map[q]) map[q]={as:0}; map[q].t = d; });
-  const names = Object.keys(map);
-  drawBarChart("chartHubs", names, [
-    {name:"AS-IS", color:"rgba(31,111,235,0.85)", data:names.map(n=>map[n].as)},
-    {name:"TARGET", color:"rgba(125,74,234,0.85)", data:names.map(n=>map[n].t)}
+
+  // Top Hubs: show AS-IS top 5 then TARGET top 5 side by side with labels
+  const asTop = (asIs.top5_hub_qm || []).slice(0, 5);
+  const tTop = (target.top5_hub_qm || []).slice(0, 5);
+
+  // Build combined labels: "AS: QM_name" and "TGT: QM_name"
+  const hubLabels = [];
+  const asData = [];
+  const tData = [];
+
+  asTop.forEach(([q, d]) => {
+    const short = q.length > 8 ? q.slice(0, 8) : q;
+    hubLabels.push("AS:" + short);
+    asData.push(d);
+    tData.push(0);
+  });
+  tTop.forEach(([q, d]) => {
+    const short = q.length > 8 ? q.slice(0, 8) : q;
+    hubLabels.push("TGT:" + short);
+    asData.push(0);
+    tData.push(d);
+  });
+
+  drawBarChart("chartHubs", hubLabels, [
+    {name:"AS-IS", color:"rgba(31,111,235,0.85)", data:asData},
+    {name:"TARGET", color:"rgba(125,74,234,0.85)", data:tData}
   ]);
 }
 
