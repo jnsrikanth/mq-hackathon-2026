@@ -201,36 +201,44 @@ function fit(which){
 function parseDOT(dot){
   const edges = [], nodes = new Set();
   if(!dot) return {edges, nodes};
-  const re = /"([^"]+)"\s*->\s*"([^"]+)"\s*\[label="([^"]*)"\]/g;
+  const re = /"([^"]+)"\s*->\s*"([^"]+)"\s*\[([^\]]*)\]/g;
   let m, count=0;
-  while((m = re.exec(dot)) && count < 1200){
-    edges.push({s:m[1], d:m[2], rel:m[3] || ""});
+  while((m = re.exec(dot)) && count < 2000){
+    const attrs = m[3] || "";
+    const lm = attrs.match(/label="([^"]*)"/);
+    const rel = lm ? lm[1] : "";
+    edges.push({s:m[1], d:m[2], rel:rel});
     nodes.add(m[1]); nodes.add(m[2]); count++;
   }
   return {edges, nodes};
 }
 
-function dotToSVG(dot, width=1100, height=560){
+function dotToSVG(dot, width=1400, height=700){
   const {edges, nodes} = parseDOT(dot);
+  if(nodes.size === 0) return "";
   const P = [], Q = [];
-  nodes.forEach(n => { (n.startsWith("QM_") ? Q : P).push(n); });
+  nodes.forEach(n => {
+    if(n.startsWith("QM_")||n.startsWith("WL")||n.startsWith("WQ")||n.startsWith("WR")||n.startsWith("WS")) Q.push(n);
+    else P.push(n);
+  });
   P.sort(); Q.sort();
-  const pad=16, H=Math.max(400,height), W=Math.max(800,width);
-  let s = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`;
-  s += `<defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#98B3D1"/></marker></defs>`;
-  const qmY = H/2;
-  Q.forEach((id,i) => {
-    const x = pad + 200 + (i*80);
-    s += `<rect x="${x-40}" y="${qmY-26}" width="80" height="52" rx="8" fill="#F0F6FF" stroke="#1F6FEB" stroke-width="2"/>`;
-    s += `<text x="${x}" y="${qmY+6}" text-anchor="middle" fill="#1F6FEB" font-size="11">${id}</text>`;
-  });
-  P.forEach((id,i) => {
-    const x = pad + (i%2===0 ? 0 : W-pad-120);
-    const y = 60 + 40 + Math.floor(i/2)*70;
-    s += `<ellipse cx="${x+60}" cy="${y}" rx="60" ry="26" fill="#FCF5FF" stroke="#7D4AEA" stroke-width="2"/>`;
-    s += `<text x="${x+60}" y="${y+6}" text-anchor="middle" fill="#7D4AEA" font-size="11">${id}</text>`;
-  });
-  s += `</svg>`;
+  const pad=20;
+  const qmSp = Math.max(55, Math.min(90, 1200/Math.max(Q.length,1)));
+  const appSp = Math.max(45, Math.min(70, 600/Math.max(P.length,1)));
+  const W = Math.max(width, pad*4 + Q.length*qmSp + 200);
+  const H = Math.max(height, pad*2 + Math.ceil(P.length/2)*appSp + 200);
+  let s = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="background:#08101A;">`;
+  s += `<defs><marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#98B3D1"/></marker></defs>`;
+  s += `<text x="${W/2}" y="28" text-anchor="middle" fill="#CFE1FA" font-size="13" font-weight="bold">${Q.length} QMs, ${P.length} Apps, ${edges.length} edges</text>`;
+  const qmY=H*0.5, qmX0=(W-Q.length*qmSp)/2, pos={};
+  Q.forEach((id,i)=>{const x=qmX0+i*qmSp+qmSp/2;pos[id]={x,y:qmY};const lb=id.length>8?id.slice(0,8):id;s+=`<rect x="${x-32}" y="${qmY-18}" width="64" height="36" rx="5" fill="#F0F6FF" stroke="#1F6FEB" stroke-width="1.5"/><text x="${x}" y="${qmY+4}" text-anchor="middle" fill="#1F6FEB" font-size="8" font-weight="600">${lb}</text>`;});
+  const topA=P.slice(0,Math.ceil(P.length/2)),botA=P.slice(Math.ceil(P.length/2));
+  const tX0=(W-topA.length*appSp)/2;
+  topA.forEach((id,i)=>{const x=tX0+i*appSp+appSp/2,y=65;pos[id]={x,y};const lb=id.length>14?id.slice(0,14)+"..":id;s+=`<ellipse cx="${x}" cy="${y}" rx="40" ry="16" fill="#FCF5FF" stroke="#7D4AEA" stroke-width="1.5"/><text x="${x}" y="${y+4}" text-anchor="middle" fill="#7D4AEA" font-size="7">${lb}</text>`;});
+  const bX0=(W-botA.length*appSp)/2;
+  botA.forEach((id,i)=>{const x=bX0+i*appSp+appSp/2,y=H-65;pos[id]={x,y};const lb=id.length>14?id.slice(0,14)+"..":id;s+=`<ellipse cx="${x}" cy="${y}" rx="40" ry="16" fill="#FCF5FF" stroke="#7D4AEA" stroke-width="1.5"/><text x="${x}" y="${y+4}" text-anchor="middle" fill="#7D4AEA" font-size="7">${lb}</text>`;});
+  edges.forEach(e=>{const f=pos[e.s],t=pos[e.d];if(!f||!t)return;const c=e.rel==="writes_to"?"#1F6FEB":e.rel==="reads_from"?"#7D4AEA":"#4B5563";s+=`<line x1="${f.x}" y1="${f.y}" x2="${t.x}" y2="${t.y}" stroke="${c}" stroke-width="0.8" stroke-opacity="0.35" marker-end="url(#arr)"/>`;});
+  s+=`</svg>`;
   return s;
 }
 
@@ -242,7 +250,7 @@ async function onAnalyze(){
     const fd = new FormData(); fd.append("file", f, f.name);
     const r = await fetch(`${API}/analyze`, {method:"POST", body:fd});
     const j = await r.json();
-    if(j.error){ setMsg("Analyze error"); setStatus(j.error); return; }
+    if(j.error){ setMsg("Analyze error"); setStatus(j.error); console.error(j); return; }
     asIs = j.topology_metrics;
     $("as_is").textContent = JSON.stringify(asIs, null, 2);
     $("k_as_nodes").textContent = asIs.total_nodes;
@@ -250,23 +258,30 @@ async function onAnalyze(){
     $("k_as_qms").textContent = asIs.unique_queue_managers;
     $("k_as_tcs").textContent = asIs.tcs_score;
     setMsg("AS-IS analyzed.");
-    let ok = false;
-    try{
-      const d = await (await fetch(`${API}/graph/as_is_dot`)).json();
-      if(d && d.dot){ lastDotAS = d.dot; lastSvgAs = dotToSVG(lastDotAS); injectSVG("graph_as", lastSvgAs); ok=true; }
-    }catch(_){}
-    if(!ok) $("graph_as").textContent = "(no graph)";
-  }catch(e){ setMsg("Analyze failed."); setStatus(String(e)); }
+    // Render AS-IS graph from DOT returned in response
+    if(j.as_is_dot){
+      lastDotAS = j.as_is_dot;
+      lastSvgAs = dotToSVG(lastDotAS);
+      injectSVG("graph_as", lastSvgAs);
+    } else {
+      // Fallback: fetch from endpoint
+      try{
+        const d = await (await fetch(`${API}/graph/as_is_dot`)).json();
+        if(d && d.dot && d.dot.length > 20){ lastDotAS = d.dot; lastSvgAs = dotToSVG(lastDotAS); injectSVG("graph_as", lastSvgAs); }
+        else $("graph_as").textContent = "(no graph data)";
+      }catch(_){ $("graph_as").textContent = "(graph fetch failed)"; }
+    }
+  }catch(e){ setMsg("Analyze failed."); setStatus(String(e)); console.error(e); }
 }
 
 async function onTransform(){
   try{
-    setStatus(""); setMsg("Working...");
+    setStatus(""); setMsg("Transforming...");
     const f = $("file").files[0]; if(!f){ setMsg("Choose a CSV first."); return; }
     const fd = new FormData(); fd.append("file", f, f.name);
     const r = await fetch(`${API}/transform`, {method:"POST", body:fd});
     const j = await r.json();
-    if(j.error){ setMsg("Transform error"); setStatus(j.error); return; }
+    if(j.error){ setMsg("Transform error"); setStatus(JSON.stringify(j, null, 2)); console.error(j); return; }
     target = j.target_report?.topology_metrics || {};
     $("target").textContent = JSON.stringify(target, null, 2);
     $("k_t_nodes").textContent = target.total_nodes ?? "?";
@@ -274,12 +289,17 @@ async function onTransform(){
     $("k_t_qms").textContent = target.unique_queue_managers ?? "?";
     $("k_t_tcs").textContent = target.tcs_score ?? "?";
     setMsg("TARGET generated.");
-    if(j.target_dot){ lastSvgT = dotToSVG(j.target_dot); injectSVG("graph_t", lastSvgT); }
-    else $("graph_t").textContent = "(no graph)";
+    // Render TARGET graph
+    if(j.target_dot){
+      lastSvgT = dotToSVG(j.target_dot);
+      injectSVG("graph_t", lastSvgT);
+    } else {
+      $("graph_t").textContent = "(no target graph)";
+    }
     if(asIs && target) drawKPICharts();
     // Display rule validation evidence
     if(j.rule_validation) renderRuleValidation(j.rule_validation);
-  }catch(e){ setMsg("Transform failed."); setStatus(String(e)); }
+  }catch(e){ setMsg("Transform failed."); setStatus(String(e)); console.error(e); }
 }
 
 async function onExplain(){

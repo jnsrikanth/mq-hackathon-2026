@@ -1,15 +1,14 @@
 """Pure-Python WSGI web engine for the MQ Guardian dashboard.
 
 Endpoints:
-  POST /analyze      — Analyze AS-IS CSV, return topology metrics
-  POST /transform    — Transform AS-IS → TARGET, return metrics + DOT
+  POST /analyze      — Analyze AS-IS CSV, return topology metrics + DOT
+  POST /transform    — Transform AS-IS → TARGET, return metrics + DOT + rules
   POST /explain      — Explain target topology decisions
   GET  /graph/as_is_dot — Return cached AS-IS DOT graph
+  GET  /graph/target_dot — Return cached TARGET DOT graph
   POST /stream/push  — Queue a CSV for streaming analysis
   GET  /stream/metrics — Return current stream metrics
   GET  /health       — Health check
-
-Uses only Python stdlib (wsgiref) — no Flask, FastAPI, or other frameworks.
 """
 
 from __future__ import annotations
@@ -24,6 +23,7 @@ from wsgiref.simple_server import make_server
 
 from transformer.analyzer import analyze_topology, edges_to_dot
 from transformer.transform import run_transform
+from transformer.rule_checker import check_all_rules_from_dir
 from chatbot.stream_shim import StreamState
 
 ART_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "artifacts"))
@@ -31,9 +31,11 @@ os.makedirs(ART_DIR, exist_ok=True)
 
 STATE = StreamState(ART_DIR)
 LAST_ASIS_DOT = ""
+LAST_TARGET_DOT = ""
+LAST_CSV_PATH = ""  # remember last uploaded CSV for transform reuse
 
 
-def _cors() -> list[tuple[str, str]]:
+def _cors():
     return [
         ("Access-Control-Allow-Origin", "*"),
         ("Access-Control-Allow-Methods", "GET, POST, OPTIONS"),
@@ -41,10 +43,8 @@ def _cors() -> list[tuple[str, str]]:
     ]
 
 
-def _json(
-    status: str, payload: dict,
-) -> tuple[str, list[tuple[str, str]], list[bytes]]:
-    body = json.dumps(payload, indent=2).encode("utf-8")
+def _json(status, payload):
+    body = json.dumps(payload, indent=2, default=str).encode("utf-8")
     headers = [
         ("Content-Type", "application/json"),
         ("Content-Length", str(len(body))),
@@ -52,86 +52,95 @@ def _json(
     return status, headers, [body]
 
 
-def bad_request(msg: str) -> tuple[str, list[tuple[str, str]], list[bytes]]:
+def bad_request(msg):
     return _json("400 Bad Request", {"error": msg})
 
 
-def _read_fieldstorage(environ: dict) -> tuple[object | None, str]:
-    """Parse multipart form upload. Returns (fileitem, filename) or (None, error_msg)."""
+def _save_upload(environ):
+    """Save uploaded file to artifacts dir. Returns (filepath, error)."""
     try:
         form = cgi.FieldStorage(fp=environ.get("wsgi.input"), environ=environ)
         fileitem = form["file"] if form and "file" in form else None
+        if fileitem is None:
+            return None, "No file uploaded"
         filename = getattr(fileitem, "filename", "") or ""
-        return fileitem, filename
+        if not filename.lower().endswith(".csv"):
+            return None, "Upload a .csv file"
+        data = fileitem.file.read()
+        if not data:
+            return None, "Empty file"
+        tmp = os.path.join(ART_DIR, f"upload_{int(time.time())}.csv")
+        with open(tmp, "wb") as f:
+            f.write(data)
+        return tmp, None
     except Exception as e:
-        return None, f"Failed to parse multipart form: {e}"
+        return None, f"Upload failed: {e}"
 
 
-def app(environ: dict, start_response: object) -> list[bytes]:
-    """WSGI application."""
-    global LAST_ASIS_DOT
+def app(environ, start_response):
+    global LAST_ASIS_DOT, LAST_TARGET_DOT, LAST_CSV_PATH
 
     try:
         path = environ.get("PATH_INFO", "/")
         method = environ.get("REQUEST_METHOD", "GET")
 
         if method == "OPTIONS":
-            start_response("204 No Content", _cors())  # type: ignore[arg-type]
+            start_response("204 No Content", _cors())
             return [b""]
 
         if path == "/health":
             status, headers, body = _json("200 OK", {"ok": True})
-            start_response(status, headers)  # type: ignore[arg-type]
+            start_response(status, headers)
             return body
 
         # === ANALYZE ===
         if path == "/analyze" and method == "POST":
-            result = _read_fieldstorage(environ)
-            fileitem, filename = result
-            if fileitem is None or not str(filename).lower().endswith(".csv"):
-                status, headers, body = bad_request("upload a .csv")
+            csv_path, err = _save_upload(environ)
+            if err:
+                status, headers, body = bad_request(err)
             else:
-                data = fileitem.file.read()  # type: ignore[union-attr]
-                if not data:
-                    status, headers, body = bad_request("empty file")
-                else:
-                    tmp = os.path.join(ART_DIR, f"as_is_{int(time.time())}.csv")
-                    with open(tmp, "wb") as f:
-                        f.write(data)
-                    metrics, extras = analyze_topology(tmp)
-                    LAST_ASIS_DOT = edges_to_dot(extras.get("edges", []))
-                    STATE.set_as_is(metrics)
-                    status, headers, body = _json("200 OK", {
-                        "dataset": os.path.basename(tmp),
-                        "topology_metrics": metrics,
-                    })
+                LAST_CSV_PATH = csv_path
+                metrics, extras = analyze_topology(csv_path)
+                LAST_ASIS_DOT = edges_to_dot(extras.get("edges", []))
+                STATE.set_as_is(metrics)
+                status, headers, body = _json("200 OK", {
+                    "dataset": os.path.basename(csv_path),
+                    "topology_metrics": metrics,
+                    "as_is_dot": LAST_ASIS_DOT,
+                })
 
         # === TRANSFORM ===
         elif path == "/transform" and method == "POST":
-            result = _read_fieldstorage(environ)
-            fileitem, filename = result
-            if fileitem is None or not str(filename).lower().endswith(".csv"):
-                status, headers, body = bad_request("upload a .csv")
-            else:
-                data = fileitem.file.read()  # type: ignore[union-attr]
-                if not data:
-                    status, headers, body = bad_request("empty file")
+            csv_path, err = _save_upload(environ)
+            if err:
+                # Try reusing last uploaded CSV
+                if LAST_CSV_PATH and os.path.exists(LAST_CSV_PATH):
+                    csv_path = LAST_CSV_PATH
+                    err = None
                 else:
-                    tmp = os.path.join(ART_DIR, f"as_is_{int(time.time())}.csv")
-                    with open(tmp, "wb") as f:
-                        f.write(data)
-                    out = run_transform(tmp, os.path.join(ART_DIR, "exports"))
-                    if out.get("error"):
-                        status, headers, body = _json("400 Bad Request", out)
-                    else:
-                        STATE.set_target(out.get("target_report", {}))
-                        # Run rule validation with evidence
-                        from transformer.rule_checker import check_all_rules_from_dir
-                        rule_results = check_all_rules_from_dir(
-                            os.path.join(ART_DIR, "exports")
-                        )
-                        out["rule_validation"] = rule_results
-                        status, headers, body = _json("200 OK", out)
+                    status, headers, body = bad_request(err)
+                    start_response(status, headers)
+                    return body
+
+            try:
+                export_dir = os.path.join(ART_DIR, "exports")
+                out = run_transform(csv_path, export_dir)
+                if out.get("error"):
+                    status, headers, body = _json("400 Bad Request", out)
+                else:
+                    STATE.set_target(out.get("target_report", {}))
+                    LAST_TARGET_DOT = out.get("target_dot", "")
+
+                    # Run rule validation
+                    rule_results = check_all_rules_from_dir(export_dir)
+                    out["rule_validation"] = rule_results
+
+                    status, headers, body = _json("200 OK", out)
+            except Exception as e:
+                status, headers, body = _json("500 Internal Server Error", {
+                    "error": str(e),
+                    "trace": traceback.format_exc(),
+                })
 
         # === EXPLAIN ===
         elif path == "/explain" and method == "POST":
@@ -159,16 +168,19 @@ def app(environ: dict, start_response: object) -> list[bytes]:
                 "200 OK", {"dot": LAST_ASIS_DOT or "digraph G {}"}
             )
 
+        elif path == "/graph/target_dot":
+            status, headers, body = _json(
+                "200 OK", {"dot": LAST_TARGET_DOT or "digraph G {}"}
+            )
+
         # === STREAMING ===
         elif path == "/stream/push" and method == "POST":
-            result = _read_fieldstorage(environ)
-            fileitem, filename = result
-            if fileitem is None or not str(filename).lower().endswith(".csv"):
-                status, headers, body = bad_request("upload a .csv")
+            csv_path, err = _save_upload(environ)
+            if err:
+                status, headers, body = bad_request(err)
             else:
-                p = STATE.push_stream_csv(fileitem)
                 status, headers, body = _json(
-                    "200 OK", {"queued": os.path.basename(p)}
+                    "200 OK", {"queued": os.path.basename(csv_path)}
                 )
 
         elif path == "/stream/metrics":
@@ -177,7 +189,7 @@ def app(environ: dict, start_response: object) -> list[bytes]:
         else:
             status, headers, body = _json("404 Not Found", {"error": "no route"})
 
-        start_response(status, headers)  # type: ignore[arg-type]
+        start_response(status, headers)
         return body
 
     except Exception as e:
@@ -185,12 +197,11 @@ def app(environ: dict, start_response: object) -> list[bytes]:
             "error": str(e),
             "trace": traceback.format_exc(),
         })
-        start_response(status, headers)  # type: ignore[arg-type]
+        start_response(status, headers)
         return body
 
 
 def main(port: int = 8088) -> None:
-    """Start the WSGI server."""
     t = threading.Thread(target=STATE.watch_folder, daemon=True)
     t.start()
     with make_server("", port, app) as httpd:
