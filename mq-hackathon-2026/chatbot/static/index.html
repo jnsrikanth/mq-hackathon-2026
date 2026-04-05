@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>Intelligent MQ Topology Simplification</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<style>
+:root{--bg:#0B1220;--card:#121B2E;--accent:#1F6FEB;--accent2:#7D4AEA;--text:#FFFFFF;--muted:#CFE1FA;--chartH:320px;--graphMinH:420px;--graphMaxH:560px;--pad:16px;}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:"Segoe UI",Arial,sans-serif;}
+.wrap{max-width:2560px;margin:0 auto;padding:20px 28px;}
+h1{margin:0 0 12px 0;font-size:28px;}
+.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:16px;}
+.card{background:var(--card);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:14px 16px;box-shadow:0 4px 24px rgba(0,0,0,0.25);}
+.span-3{grid-column:span 3;}.span-4{grid-column:span 4;}.span-6{grid-column:span 6;}.span-8{grid-column:span 8;}.span-12{grid-column:span 12;}
+.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+button{background:var(--accent);border:none;border-radius:8px;padding:10px 14px;color:#fff;cursor:pointer;font-weight:600;}
+button.secondary{background:var(--accent2);}
+input[type="file"]{color:var(--muted);}
+pre{white-space:pre-wrap;word-break:break-word;color:var(--muted);max-height:320px;overflow:auto;}
+.kpi{font-size:18px;color:var(--text);}.kpi strong{font-size:26px;color:#fff;}
+.pill{display:inline-block;padding:4px 10px;background:rgba(255,255,255,0.12);border-radius:20px;color:#fff;font-size:12px;}
+#status{margin-top:8px;font-size:13px;color:#FFFD66;white-space:pre-wrap;}
+.chartBox{height:var(--chartH);}
+text.axis{fill:#FFFFFF;font-size:13px;font-weight:700;}
+line.axis{stroke:#FFFFFF;stroke-width:1.2;}
+.graph{background:#08101A;border-radius:10px;overflow:auto;height:var(--graphMinH);min-height:var(--graphMinH);max-height:var(--graphMaxH);position:relative;padding:var(--pad);}
+.toolbar{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;}
+.toolbar label{color:#CFE1FA;font-size:13px;}
+select,input[type="number"]{background:#0D1525;color:#fff;border:1px solid rgba(255,255,255,0.2);border-radius:8px;padding:6px 8px;outline:none;}
+@media(max-width:1400px){.span-6,.span-8,.span-12{grid-column:span 12;}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Intelligent MQ Topology Simplification &amp; Automation</h1>
+<!-- Controls -->
+<div class="grid">
+<div class="card span-8">
+<h3>Upload &amp; Run</h3>
+<div class="row" style="gap:16px;">
+<input type="file" id="file" accept=".csv"/>
+<button id="btnAnalyze">Analyze AS-IS</button>
+<button id="btnTransform" class="secondary">Transform → TARGET</button>
+<span id="msg" class="pill"></span>
+</div>
+<div class="row" style="gap:16px;margin-top:10px;">
+<input type="file" id="streamFile" accept=".csv"/>
+<button id="btnStreamPush">Stream Push CSV</button>
+<button id="btnStreamRefresh">Refresh Stream Metrics</button>
+<div class="toolbar" style="margin-left:auto;">
+<label for="zoomStep">Zoom step:</label>
+<input id="zoomStep" type="number" value="0.15" min="0.05" max="0.75" step="0.05" style="width:70px;"/>
+</div>
+</div>
+<div id="status"></div>
+</div>
+<div class="card span-4">
+<h3>Agent (Explain)</h3>
+<button id="btnExplain">Explain Target</button>
+<pre id="explain"></pre>
+</div>
+</div>
+
+<!-- KPI Cards -->
+<div class="grid" style="margin-top:16px;">
+<div class="card span-3"><div class="kpi">AS-IS Nodes<br><strong id="k_as_nodes"></strong></div></div>
+<div class="card span-3"><div class="kpi">AS-IS Edges<br><strong id="k_as_edges"></strong></div></div>
+<div class="card span-3"><div class="kpi">AS-IS QMs<br><strong id="k_as_qms"></strong></div></div>
+<div class="card span-3"><div class="kpi">AS-IS TCS<br><strong id="k_as_tcs"></strong></div></div>
+<div class="card span-3"><div class="kpi">TARGET Nodes<br><strong id="k_t_nodes"></strong></div></div>
+<div class="card span-3"><div class="kpi">TARGET Edges<br><strong id="k_t_edges"></strong></div></div>
+<div class="card span-3"><div class="kpi">TARGET QMs<br><strong id="k_t_qms"></strong></div></div>
+<div class="card span-3"><div class="kpi">TARGET TCS<br><strong id="k_t_tcs"></strong></div></div>
+</div>
+
+<!-- Charts -->
+<div class="grid" style="margin-top:16px;">
+<div class="card span-6">
+<h3>AS-IS vs TARGET (Nodes / Edges / QMs / Brittle / TCS)</h3>
+<div class="chartBox" id="chartKPI"></div>
+</div>
+<div class="card span-6">
+<h3>Top Hubs – AS-IS vs TARGET</h3>
+<div class="chartBox" id="chartHubs"></div>
+</div>
+</div>
+
+<!-- Graphs -->
+<div class="grid" style="margin-top:16px;">
+<div class="card span-6">
+<div class="toolbar">
+<h3 style="margin:0;">AS-IS Topology</h3>
+<button id="btnFitAs">Fit</button>
+<button id="btnZoomInAs">Zoom +</button>
+<button id="btnZoomOutAs">Zoom -</button>
+</div>
+<div id="graph_as" class="graph"></div>
+</div>
+<div class="card span-6">
+<div class="toolbar">
+<h3 style="margin:0;">TARGET Topology</h3>
+<button id="btnFitT">Fit</button>
+<button id="btnZoomInT">Zoom +</button>
+<button id="btnZoomOutT">Zoom -</button>
+</div>
+<div id="graph_t" class="graph"></div>
+</div>
+</div>
+
+<!-- Raw JSON panels -->
+<div class="grid" style="margin-top:16px;">
+<div class="card span-6"><h3>AS-IS Metrics (JSON)</h3><pre id="as_is"></pre></div>
+<div class="card span-6"><h3>TARGET Metrics (JSON)</h3><pre id="target"></pre></div>
+</div>
+</div>
+<script>
+const API = "http://127.0.0.1:8088";
+let asIs = null, target = null;
+let lastSvgAs = "", lastSvgT = "", lastDotAS = "";
+
+function $(id){ return document.getElementById(id); }
+function setMsg(t){ $("msg").textContent = t; }
+function setStatus(t){ $("status").textContent = t; }
+function clearEl(el){ while(el.firstChild) el.removeChild(el.firstChild); }
+
+function svgEl(tag, attrs={}, children=[]){
+  const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for(const k in attrs) el.setAttribute(k, attrs[k]);
+  for(const c of children) el.appendChild(c);
+  return el;
+}
+
+/* ==================== PURE SVG CHARTS ==================== */
+function drawBarChart(containerId, labels, series){
+  const c = $(containerId); clearEl(c);
+  const W = Math.max(600, c.clientWidth||900), H = Math.max(260, c.clientHeight||320);
+  const pad = {l:70, r:24, t:22, b:42}, innerW = W-pad.l-pad.r, innerH = H-pad.t-pad.b;
+  const svg = svgEl("svg", {width:W, height:H});
+  const allSeries = series.flatMap(s => s.data);
+  const maxY = Math.max(1, Math.max(...allSeries.map(v => v*1.1)));
+  svg.appendChild(svgEl("line", {x1:pad.l, y1:pad.t, x2:pad.l, y2:H-pad.b, class:"axis"}));
+  svg.appendChild(svgEl("line", {x1:pad.l, y1:H-pad.b, x2:W-pad.r, y2:H-pad.b, class:"axis"}));
+  const ticks = 5;
+  for(let i=0; i<=ticks; i++){
+    const y = pad.t + (innerH * (1 - i/ticks));
+    svg.appendChild(svgEl("line", {x1:pad.l-6, y1:y, x2:pad.l, y2:y, class:"axis"}));
+    svg.appendChild(svgEl("text", {x:pad.l-10, y:y+5, "text-anchor":"end", class:"axis"},
+      [document.createTextNode(Math.round(maxY*i/ticks))]));
+  }
+  const groups = Math.max(1, labels.length);
+  const barW = (innerW / groups) * 0.72;
+  labels.forEach((lab, i) => {
+    const x = pad.l + (i+0.5)*(innerW/groups) - barW/2;
+    series.forEach((s, j) => {
+      const h = (s.data[i] / maxY) * innerH;
+      svg.appendChild(svgEl("rect", {
+        x: x + j*(barW/series.length), y: H-pad.b-h,
+        width: barW/series.length, height: h, fill: s.color
+      }));
+    });
+  });
+  c.appendChild(svg);
+}
+
+/* ==================== GRAPH RENDERING ==================== */
+function injectSVG(containerId, svgString){
+  const host = $(containerId); host.innerHTML = "";
+  if(!svgString || !svgString.trim().startsWith("<svg")){ host.textContent = "(no graph)"; return; }
+  const wrap = document.createElement("div");
+  wrap.style.width = "100%"; wrap.style.height = "100%";
+  wrap.innerHTML = svgString.trim();
+  host.appendChild(wrap); host.dataset.zoom = "1";
+}
+
+function zoom(which, dir){
+  const host = $(which === "as" ? "graph_as" : "graph_t");
+  let step = parseFloat($("zoomStep").value) || 0.15;
+  let z = parseFloat(host.dataset.zoom) || 1;
+  z += dir > 0 ? step : -step;
+  z = Math.max(0.1, Math.min(3, z));
+  host.dataset.zoom = z;
+  const svg = host.querySelector("svg");
+  if(svg){ svg.style.transformOrigin = "0 0"; svg.style.transform = `scale(${z})`; }
+}
+
+function fit(which){
+  const host = $(which === "as" ? "graph_as" : "graph_t");
+  host.dataset.zoom = "1";
+  const svg = host.querySelector("svg");
+  if(svg) svg.style.transform = "scale(1)";
+}
+
+function parseDOT(dot){
+  const edges = [], nodes = new Set();
+  if(!dot) return {edges, nodes};
+  const re = /"([^"]+)"\s*->\s*"([^"]+)"\s*\[label="([^"]*)"\]/g;
+  let m, count=0;
+  while((m = re.exec(dot)) && count < 1200){
+    edges.push({s:m[1], d:m[2], rel:m[3] || ""});
+    nodes.add(m[1]); nodes.add(m[2]); count++;
+  }
+  return {edges, nodes};
+}
+
+function dotToSVG(dot, width=1100, height=560){
+  const {edges, nodes} = parseDOT(dot);
+  const P = [], Q = [];
+  nodes.forEach(n => { (n.startsWith("QM_") ? Q : P).push(n); });
+  P.sort(); Q.sort();
+  const pad=16, H=Math.max(400,height), W=Math.max(800,width);
+  let s = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`;
+  s += `<defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#98B3D1"/></marker></defs>`;
+  const qmY = H/2;
+  Q.forEach((id,i) => {
+    const x = pad + 200 + (i*80);
+    s += `<rect x="${x-40}" y="${qmY-26}" width="80" height="52" rx="8" fill="#F0F6FF" stroke="#1F6FEB" stroke-width="2"/>`;
+    s += `<text x="${x}" y="${qmY+6}" text-anchor="middle" fill="#1F6FEB" font-size="11">${id}</text>`;
+  });
+  P.forEach((id,i) => {
+    const x = pad + (i%2===0 ? 0 : W-pad-120);
+    const y = 60 + 40 + Math.floor(i/2)*70;
+    s += `<ellipse cx="${x+60}" cy="${y}" rx="60" ry="26" fill="#FCF5FF" stroke="#7D4AEA" stroke-width="2"/>`;
+    s += `<text x="${x+60}" y="${y+6}" text-anchor="middle" fill="#7D4AEA" font-size="11">${id}</text>`;
+  });
+  s += `</svg>`;
+  return s;
+}
+
+/* ==================== ACTIONS ==================== */
+async function onAnalyze(){
+  try{
+    setStatus(""); setMsg("Working...");
+    const f = $("file").files[0]; if(!f){ setMsg("Choose a CSV first."); return; }
+    const fd = new FormData(); fd.append("file", f, f.name);
+    const r = await fetch(`${API}/analyze`, {method:"POST", body:fd});
+    const j = await r.json();
+    if(j.error){ setMsg("Analyze error"); setStatus(j.error); return; }
+    asIs = j.topology_metrics;
+    $("as_is").textContent = JSON.stringify(asIs, null, 2);
+    $("k_as_nodes").textContent = asIs.total_nodes;
+    $("k_as_edges").textContent = asIs.total_edges;
+    $("k_as_qms").textContent = asIs.unique_queue_managers;
+    $("k_as_tcs").textContent = asIs.tcs_score;
+    setMsg("AS-IS analyzed.");
+    let ok = false;
+    try{
+      const d = await (await fetch(`${API}/graph/as_is_dot`)).json();
+      if(d && d.dot){ lastDotAS = d.dot; lastSvgAs = dotToSVG(lastDotAS); injectSVG("graph_as", lastSvgAs); ok=true; }
+    }catch(_){}
+    if(!ok) $("graph_as").textContent = "(no graph)";
+  }catch(e){ setMsg("Analyze failed."); setStatus(String(e)); }
+}
+
+async function onTransform(){
+  try{
+    setStatus(""); setMsg("Working...");
+    const f = $("file").files[0]; if(!f){ setMsg("Choose a CSV first."); return; }
+    const fd = new FormData(); fd.append("file", f, f.name);
+    const r = await fetch(`${API}/transform`, {method:"POST", body:fd});
+    const j = await r.json();
+    if(j.error){ setMsg("Transform error"); setStatus(j.error); return; }
+    target = j.target_report?.topology_metrics || {};
+    $("target").textContent = JSON.stringify(target, null, 2);
+    $("k_t_nodes").textContent = target.total_nodes ?? "?";
+    $("k_t_edges").textContent = target.total_edges ?? "?";
+    $("k_t_qms").textContent = target.unique_queue_managers ?? "?";
+    $("k_t_tcs").textContent = target.tcs_score ?? "?";
+    setMsg("TARGET generated.");
+    if(j.target_dot){ lastSvgT = dotToSVG(j.target_dot); injectSVG("graph_t", lastSvgT); }
+    else $("graph_t").textContent = "(no graph)";
+    if(asIs && target) drawKPICharts();
+  }catch(e){ setMsg("Transform failed."); setStatus(String(e)); }
+}
+
+async function onExplain(){
+  try{
+    if(!target){ setMsg("Run Transform first."); return; }
+    const r = await fetch(`${API}/explain`, {method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({target_metrics: target})});
+    const j = await r.json();
+    $("explain").textContent = j.explanation || JSON.stringify(j, null, 2);
+  }catch(e){ setMsg("Explain failed."); setStatus(String(e)); }
+}
+
+async function onStreamPush(){
+  try{
+    setStatus(""); setMsg("Pushing stream...");
+    const f = $("streamFile").files[0]; if(!f){ setMsg("Choose a CSV to push."); return; }
+    const fd = new FormData(); fd.append("file", f, f.name);
+    const r = await fetch(`${API}/stream/push`, {method:"POST", body:fd});
+    const j = await r.json();
+    $("msg").textContent = j.queued ? `Queued: ${j.queued}` : "Stream push done.";
+  }catch(e){ setMsg("Stream push failed."); setStatus(String(e)); }
+}
+
+async function onStreamRefresh(){
+  try{
+    const r = await fetch(`${API}/stream/metrics`);
+    const j = await r.json();
+    $("explain").textContent = JSON.stringify(j, null, 2);
+  }catch(e){ setMsg("Stream metrics failed."); setStatus(String(e)); }
+}
+
+function drawKPICharts(){
+  if(!asIs || !target) return;
+  const labels = ["Nodes","Edges","QMs","Brittle","TCS"];
+  const asVals = [asIs.total_nodes, asIs.total_edges, asIs.unique_queue_managers, asIs.brittle_apps||0, asIs.tcs_score];
+  const tVals = [target.total_nodes, target.total_edges, target.unique_queue_managers, target.brittle_apps||0, target.tcs_score];
+  drawBarChart("chartKPI", labels, [
+    {name:"AS-IS", color:"rgba(31,111,235,0.85)", data:asVals},
+    {name:"TARGET", color:"rgba(125,74,234,0.85)", data:tVals}
+  ]);
+  const asTop = asIs.top5_hub_qm || [];
+  const tTop = target.top5_hub_qm || [];
+  const map = {};
+  asTop.forEach(([q,d]) => map[q] = {as:d, t:0});
+  tTop.forEach(([q,d]) => { if(!map[q]) map[q]={as:0}; map[q].t = d; });
+  const names = Object.keys(map);
+  drawBarChart("chartHubs", names, [
+    {name:"AS-IS", color:"rgba(31,111,235,0.85)", data:names.map(n=>map[n].as)},
+    {name:"TARGET", color:"rgba(125,74,234,0.85)", data:names.map(n=>map[n].t)}
+  ]);
+}
+
+/* ==================== WIRING ==================== */
+window.addEventListener("DOMContentLoaded", async () => {
+  $("btnAnalyze").addEventListener("click", onAnalyze);
+  $("btnTransform").addEventListener("click", onTransform);
+  $("btnExplain").addEventListener("click", onExplain);
+  $("btnStreamPush").addEventListener("click", onStreamPush);
+  $("btnStreamRefresh").addEventListener("click", onStreamRefresh);
+  $("btnFitAs").addEventListener("click", () => fit("as"));
+  $("btnZoomInAs").addEventListener("click", () => zoom("as", 1));
+  $("btnZoomOutAs").addEventListener("click", () => zoom("as", -1));
+  $("btnFitT").addEventListener("click", () => fit("t"));
+  $("btnZoomInT").addEventListener("click", () => zoom("t", 1));
+  $("btnZoomOutT").addEventListener("click", () => zoom("t", -1));
+  try{
+    const h = await fetch(`${API}/health`, {method:"GET"});
+    if(h.ok) setStatus(`Engine reachable at ${API}`);
+    else setStatus(`Engine health returned ${h.status}`);
+  }catch(e){ setStatus(`Cannot reach engine at ${API} – run: python -m chatbot.serve_engine`); }
+});
+</script>
+</body>
+</html>
