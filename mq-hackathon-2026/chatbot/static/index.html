@@ -112,6 +112,14 @@ select,input[type="number"]{background:#0D1525;color:#fff;border:1px solid rgba(
 <div class="card span-6"><h3>AS-IS Metrics (JSON)</h3><pre id="as_is"></pre></div>
 <div class="card span-6"><h3>TARGET Metrics (JSON)</h3><pre id="target"></pre></div>
 </div>
+
+<!-- Rule Validation Evidence -->
+<div class="grid" style="margin-top:16px;">
+<div class="card span-12">
+<h3>MQ Target-State Rule Validation — Evidence Report</h3>
+<div id="ruleValidation" style="font-family:monospace;font-size:13px;color:var(--muted);"></div>
+</div>
+</div>
 </div>
 <script>
 const API = "http://127.0.0.1:8088";
@@ -269,6 +277,8 @@ async function onTransform(){
     if(j.target_dot){ lastSvgT = dotToSVG(j.target_dot); injectSVG("graph_t", lastSvgT); }
     else $("graph_t").textContent = "(no graph)";
     if(asIs && target) drawKPICharts();
+    // Display rule validation evidence
+    if(j.rule_validation) renderRuleValidation(j.rule_validation);
   }catch(e){ setMsg("Transform failed."); setStatus(String(e)); }
 }
 
@@ -300,6 +310,48 @@ async function onStreamRefresh(){
     const j = await r.json();
     $("explain").textContent = JSON.stringify(j, null, 2);
   }catch(e){ setMsg("Stream metrics failed."); setStatus(String(e)); }
+}
+
+function renderRuleValidation(rules){
+  const el = $("ruleValidation");
+  if(!rules || !rules.length){ el.innerHTML = "<p>No rule validation data.</p>"; return; }
+  let html = '<table style="width:100%;border-collapse:collapse;margin-top:8px;">';
+  html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.15);">';
+  html += '<th style="text-align:left;padding:6px;color:#fff;">Rule</th>';
+  html += '<th style="text-align:left;padding:6px;color:#fff;">Status</th>';
+  html += '<th style="text-align:left;padding:6px;color:#fff;">Evidence</th>';
+  html += '</tr>';
+  let passed = 0;
+  rules.forEach(r => {
+    const icon = r.passed ? '✅' : '❌';
+    const color = r.passed ? '#4ADE80' : '#F87171';
+    if(r.passed) passed++;
+    html += `<tr style="border-bottom:1px solid rgba(255,255,255,0.08);">`;
+    html += `<td style="padding:6px;color:${color};font-weight:600;">[${r.rule_id}] ${r.rule_name}</td>`;
+    html += `<td style="padding:6px;font-size:18px;">${icon}</td>`;
+    html += `<td style="padding:6px;color:var(--muted);font-size:12px;">${r.evidence}`;
+    if(r.details && r.details.sample){
+      html += '<br><span style="color:#888;">Sample: ';
+      r.details.sample.forEach(s => { html += JSON.stringify(s) + ' '; });
+      html += '</span>';
+    }
+    if(r.violations && r.violations.length > 0){
+      html += '<br><span style="color:#F87171;">Violations: ';
+      r.violations.forEach(v => { html += v + '; '; });
+      html += '</span>';
+    }
+    html += `</td></tr>`;
+  });
+  html += '</table>';
+  html += `<div style="margin-top:12px;padding:10px;border-radius:8px;`;
+  html += passed === rules.length
+    ? `background:rgba(74,222,128,0.15);color:#4ADE80;font-weight:700;">`
+    : `background:rgba(248,113,113,0.15);color:#F87171;font-weight:700;">`;
+  html += passed === rules.length
+    ? `✅ ALL ${rules.length} RULES PASSED — TARGET TOPOLOGY IS FULLY COMPLIANT`
+    : `❌ ${rules.length - passed} of ${rules.length} RULES FAILED`;
+  html += '</div>';
+  el.innerHTML = html;
 }
 
 function drawKPICharts(){

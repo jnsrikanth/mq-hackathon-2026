@@ -125,6 +125,12 @@ def app(environ: dict, start_response: object) -> list[bytes]:
                         status, headers, body = _json("400 Bad Request", out)
                     else:
                         STATE.set_target(out.get("target_report", {}))
+                        # Run rule validation with evidence
+                        from transformer.rule_checker import check_all_rules_from_dir
+                        rule_results = check_all_rules_from_dir(
+                            os.path.join(ART_DIR, "exports")
+                        )
+                        out["rule_validation"] = rule_results
                         status, headers, body = _json("200 OK", out)
 
         # === EXPLAIN ===

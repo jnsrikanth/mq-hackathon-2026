@@ -149,7 +149,15 @@ def main():
         for k, v in state.iac_artifacts.items():
             print(f"   {k}: {v}")
 
-    print(f"\n📝 Audit trail: {len(state.audit_log)} events")
+    # ================================================================
+    # RULE VALIDATION WITH EVIDENCE
+    # ================================================================
+    from transformer.rule_checker import check_all_rules_from_dir, print_rule_results
+
+    rule_results = check_all_rules_from_dir(out_dir)
+    print_rule_results(rule_results)
+
+    print(f"📝 Audit trail: {len(state.audit_log)} events")
     print()
     print("=" * 70)
     print("  Demo complete. Run the Web UI for visual comparison:")
