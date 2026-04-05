@@ -1,0 +1,5 @@
+pydantic
+jsonschema
+pyyaml
+langchain-ollama
+langchain-openai

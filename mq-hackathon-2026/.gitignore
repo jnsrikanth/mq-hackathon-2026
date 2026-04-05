@@ -8,3 +8,6 @@ build/
 artifacts/
 .DS_Store
 *.csv.tmp
+
+# DO NOT ignore wheels/ — vendored for offline corporate install
+!wheels/

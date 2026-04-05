@@ -1,26 +1,45 @@
 # MQ Guardian Platform — Corporate Laptop Setup Guide
 
-## Quick Start (5 minutes)
+## Offline Install (Corporate Network — No PyPI Access)
+
+This repo vendors all Python wheels for fully offline installation.
 
 ```bash
 # 1. Clone the repo
 git clone https://github.com/jnsrikanth/mq-hackathon-2026.git
 cd mq-hackathon-2026
 
-# 2. Create and activate Python virtual environment
-python3 -m venv .venv
+# 2. Create Python virtual environment (Python 3.12)
+python -m venv .venv
+
+# 3. Activate it
+# Windows (Git Bash):
+source .venv/Scripts/activate
+# Windows (CMD):
+.venv\Scripts\activate.bat
+# Windows (PowerShell):
+.venv\Scripts\Activate.ps1
+# macOS/Linux:
 source .venv/bin/activate
 
-# 3. Install dependencies
-pip install pydantic jsonschema pyyaml langchain-ollama
+# 4. Install dependencies OFFLINE from vendored wheels
+pip install --no-index --find-links=./wheels -r requirements.txt
 
-# 4. Start the web engine
+# 5. Start the web engine
 python -m chatbot.serve_engine
 
-# 5. Open the dashboard
-# Double-click chatbot/static/index.html in Finder
-# Or: open chatbot/static/index.html
+# 6. Open the dashboard
+# Double-click chatbot/static/index.html in Explorer/Finder
+# Or: start chatbot/static/index.html  (Windows)
+# Or: open chatbot/static/index.html   (macOS)
 ```
+
+You should see:
+```
+MQ Guardian Engine listening on http://127.0.0.1:8088
+```
+
+The dashboard will show "Engine connected" when the server is running.
 
 ---
 
@@ -51,38 +70,36 @@ No environment variables needed — Ollama on localhost:11434 is the default.
 Set these environment variables BEFORE starting the engine:
 
 ```bash
-# Required: Tachyon API credentials
+# Windows (Git Bash):
 export LLM_PROVIDER=tachyon
 export TACHYON_API_KEY=<your-tachyon-api-key>
 export TACHYON_BASE_URL=<your-tachyon-endpoint-url>
 export TACHYON_MODEL=<preferred-model-name>
 
-# Example:
-export LLM_PROVIDER=tachyon
-export TACHYON_API_KEY=sk-xxxxxxxxxxxxxxxxxxxx
-export TACHYON_BASE_URL=https://tachyon.internal.wellsfargo.com/v1
-export TACHYON_MODEL=gpt-4-turbo
+# Windows (CMD):
+set LLM_PROVIDER=tachyon
+set TACHYON_API_KEY=<your-tachyon-api-key>
+set TACHYON_BASE_URL=<your-tachyon-endpoint-url>
+set TACHYON_MODEL=<preferred-model-name>
+
+# Windows (PowerShell):
+$env:LLM_PROVIDER="tachyon"
+$env:TACHYON_API_KEY="<your-tachyon-api-key>"
+$env:TACHYON_BASE_URL="<your-tachyon-endpoint-url>"
+$env:TACHYON_MODEL="<preferred-model-name>"
 
 # Then start the engine
 python -m chatbot.serve_engine
 ```
 
-For Tachyon, you also need the OpenAI-compatible LangChain package:
-
-```bash
-pip install langchain-openai
-```
+The `langchain-openai` wheel is already vendored — no additional install needed.
 
 ### Test Tachyon Connection
 
 Before running the full demo, verify the Tachyon connection:
 
 ```bash
-export LLM_PROVIDER=tachyon
-export TACHYON_API_KEY=<your-key>
-export TACHYON_BASE_URL=<your-url>
-export TACHYON_MODEL=<your-model>
-
+# Set env vars first (see Option B above), then:
 python -c "from agent_brain.llm_config import test_tachyon_connection; print(test_tachyon_connection())"
 ```
 
@@ -160,13 +177,15 @@ python demo.py data/as_is_topology.csv
 
 | Issue | Fix |
 |-------|-----|
-| `ModuleNotFoundError: pydantic` | Run `pip install pydantic jsonschema pyyaml` |
-| `ModuleNotFoundError: langchain_ollama` | Run `pip install langchain-ollama` |
+| `ModuleNotFoundError` | Run `pip install --no-index --find-links=./wheels -r requirements.txt` |
+| `No matching distribution found` | Wheels are for Python 3.12 + Windows x64. Check `python --version` |
 | `Cannot reach engine at localhost:8088` | Make sure `python -m chatbot.serve_engine` is running |
-| Ollama connection refused | Run `ollama serve` in a separate terminal |
-| Tachyon auth error | Check `TACHYON_API_KEY` and `TACHYON_BASE_URL` |
-| Agent Brain takes too long | Normal — LLM inference takes 30-60s on 7B model |
-| Buttons don't respond | Hard refresh: Cmd+Shift+R (Mac) or Ctrl+Shift+R |
+| Ollama connection refused | Run `ollama serve` in a separate terminal (personal laptop only) |
+| Tachyon auth error | Check `TACHYON_API_KEY` and `TACHYON_BASE_URL` env vars |
+| Agent Brain takes too long | Normal — LLM inference takes 30-60s |
+| Buttons don't respond | Hard refresh: Ctrl+Shift+R (Windows) or Cmd+Shift+R (Mac) |
+| `pip` not found | Use `python -m pip` instead of `pip` |
+| Windows path issues | Use forward slashes or Git Bash |
 
 ---
 
